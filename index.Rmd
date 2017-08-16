@@ -1,0 +1,150 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Daniel De Leonardis"
+date: "16 August 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Executive Summary
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+In this project, the goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The goal is to predict the manner in which the participants did the exercise using the "classe" variable.
+
+The data was partitioned into training and test data sets and trained against various models with the random forest model producing the best preduction with an out of sample error rate of less than 1%.
+
+## Data Preparation
+
+The training data for this project are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+```{r libs, message=FALSE, warning=FALSE}
+library(caret)
+library(randomForest)
+```
+
+There are two data sets to load.  The first is the training data set that will be partitioned into the model training and test data and the second is the data set that will be used to predict the values used in the Course Project Prediction Quiz for automated grading.
+
+There are a number of fields that contain missing or invalid values.  These are set to NA when the data sets are loaded.
+
+```{r loadData}
+setwd("F:/Documents/Programming/R/data/har/")
+trainingData <- read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+quizTestData <- read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+```
+
+A number of columns are removed from the data sets including those that are not relevant to train the models e.g. user names and timestamps, and the columns which are predominantly NA. This leaves 53 columns in the data set with the 53rd column being the outcome variable classe.
+
+```{r clean}
+trainingData <- trainingData[, -c(1:7)]
+quizTestData <- quizTestData[, -c(1:7)]
+trainingData <- trainingData[, colSums(is.na(trainingData)) == 0]
+quizTestData <- quizTestData[, colSums(is.na(quizTestData)) == 0]
+
+dim(trainingData)
+dim(quizTestData)
+```
+
+The training data set is partitioned into the portion (60%) to be used for training the model and the remainder (40%) to test the model.
+
+```{r partData}
+set.seed(111)
+train <- createDataPartition(trainingData$classe, p = 0.6, list = FALSE)
+training <- trainingData[train,]
+testing <- trainingData[-train,]
+```
+
+A final check is performed on the data to determine which columns are highly correlated.  These (5) columns are removed to remove pair-wise correlations from the data sets.
+
+```{r removeCor}
+correl <- findCorrelation(cor(training[, -53]))
+training <- training[, -correl]
+testing <- testing[, -correl]
+quizTestData <- quizTestData[, -correl]
+dim(training)
+```
+
+## Model Selection
+
+A number of models were trained and tested with the random forest model providing the greatest accuracy at over 99% for the testing data set and 100% for the training data set i.e. the in sample error was 0% and out of sample error rates less than 1% (0.7%). A 5 fold cross-validation with 5 repeats was utilised as the resampling method.  See the Appendix A for the other models trained and tested and Appendix B for the results of the cross-validation performed against the random forest model.
+
+```{r rfMod, message=FALSE, warning=FALSE}
+ctrl <- trainControl(method = "repeatedcv", number = 5, repeats = 5, allowParallel=TRUE)
+fitRf <- randomForest(classe ~ ., data = training, trControl = ctrl)
+predRfTrain <- predict(fitRf, training)
+confusionMatrix(predRfTrain, training$classe)
+
+predRfTest <- predict(fitRf, testing)
+confusionMatrix(predRfTest, testing$classe)
+
+missClass = function(values, prediction) {
+    sum(prediction != values)/length(values)
+}
+missClass(training$classe, predRfTrain)
+missClass(testing$classe, predRfTest)
+```
+
+## Predict Classe for the (Quiz) Test Data Set
+
+The following shows the predicted classe values for the quiz data set corresponing to each quiz question.
+
+```{r predictQuiz}
+predict(fitRf, quizTestData)
+```
+
+## Conclusion
+
+Using a random forest model we are able to acheive an accuracy of over 99% in predicting the classe value in our test data set.
+
+## Appendix A - Other Models Trained & Tested
+
+The following are the other models that were trained and tested. The GBM and SVM models also produced accuracies over 90% and produced the same predictions against the quiz test data as the random forest model. The LDA produced a considerably lower accuracy at 67% and consequently did not produce the same predictions against the quiz test data as the random forest model.
+
+### Generalised Boost Regression Model (GBM)
+
+```{r boostMod, message=FALSE, warning=FALSE}
+fitBoost <- train(classe ~ ., data=training, method="gbm", verbose = FALSE, trControl = ctrl)
+predBoost <- predict(fitBoost, testing)
+confusionMatrix(predBoost, testing$classe)$overall[1]
+predict(fitBoost, quizTestData)
+```
+
+### Linear Discriminant Analysis (LDA) Model
+
+```{r ldaMod, message=FALSE, warning=FALSE}
+fitLda <- train(classe ~ ., data=training, method="lda", trControl = ctrl)
+predLda <- predict(fitLda, testing)
+confusionMatrix(predLda, testing$classe)$overall[1]
+predict(fitLda, quizTestData)
+```
+
+### Support Vector Machine (SVM) Model
+
+```{r svmMod, message=FALSE, warning=FALSE}
+library(e1071)
+fitSvm <- svm(classe ~ ., data=training)
+predSvm <- predict(fitSvm, testing)
+confusionMatrix(predSvm, testing$classe)$overall[1]
+predict(fitSvm, quizTestData)
+```
+
+## Appendix B - Random Forest Cross-Validation
+
+The following shows the results of the cross-validation performed against the random forest model. The error rate begins to approach 0 using only 6 variables and there is in fact not much difference in the error rate between using 24 variables and 47 to predict the classe.
+
+```{r rfcvRes, message=FALSE, warning=FALSE}
+cvResult <- rfcv(training[, -48], training$classe, cv.fold = 5)
+cvResult$error.cv
+with(cvResult, plot(n.var, error.cv, log="x", type="o", lwd=2))
+```
